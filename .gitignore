@@ -6,3 +6,4 @@ mkdocs.yml
 pub.bat
 utils.py
 tests/scxs/*
+*.pyc
