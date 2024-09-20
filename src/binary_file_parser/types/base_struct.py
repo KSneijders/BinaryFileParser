@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import Type, TYPE_CHECKING
 
 from alive_progress import alive_it
 
@@ -135,7 +135,7 @@ class BaseStruct(Parseable):
     @classmethod
     def _from_stream(
         cls, stream: ByteStream, *, struct_ver: Version = Version((0,)), strict: bool = False,
-        show_progress: bool = False,
+        show_progress: bool = False
     ) -> BaseStruct:
         """
         Create a struct object from a ByteStream
@@ -165,12 +165,8 @@ class BaseStruct(Parseable):
             if show_progress:
                 retriever_ls.text = f"            -> {retriever.p_name.title().replace('_', ' ')}"
             if retriever.remaining_compressed:
-                stream = ByteStream.from_bytes(cls._decompress(stream.remaining()))
-            try:
-                retriever.from_stream(instance, stream)
-            except:
-                print(retriever.p_name)
-                raise
+                stream = stream.__class__.from_bytes(cls._decompress(stream.remaining()))
+            retriever.from_stream(instance, stream)
 
         file_len = len(stream.content)
 
@@ -184,7 +180,7 @@ class BaseStruct(Parseable):
     @classmethod
     def _from_bytes(
         cls, bytes_: bytes, *, struct_ver: Version = Version((0,)), strict = False,
-        show_progress: bool = False,
+        show_progress: bool = False, stream_cls: Type[ByteStream] = ByteStream
     ) -> BaseStruct:
         """
         Create a struct object from bytes
@@ -196,13 +192,13 @@ class BaseStruct(Parseable):
 
         :return: An instance of a subtype of BaseStruct
         """
-        stream = ByteStream.from_bytes(bytes_)
+        stream = stream_cls.from_bytes(bytes_)
         return cls._from_stream(stream, struct_ver = struct_ver, strict = strict, show_progress = show_progress)
 
     @classmethod
     def _from_file(
         cls, file_name: str, *, file_version: Version = Version((0,)), strict = True,
-        show_progress: bool = True,
+        show_progress: bool = True, stream_cls: Type[ByteStream] = ByteStream
     ) -> BaseStruct:
         """
         Create a struct object from file
@@ -214,7 +210,7 @@ class BaseStruct(Parseable):
 
         :return: An instance of a subtype of BaseStruct
         """
-        stream = ByteStream.from_file(file_name)
+        stream = stream_cls.from_file(file_name)
         return cls._from_stream(stream, struct_ver = file_version, strict = strict, show_progress = show_progress)
 
     def _to_bytes(self, *, show_progress = False) -> bytes:
@@ -298,7 +294,10 @@ class BaseStruct(Parseable):
 
         return diff_retrievers
 
-    def __repr__(self, ident: int = 0) -> str:
+    def _dbg_repr(self) -> str:
+        return self.__repr__(get = lambda obj, attr: getattr(obj, attr, None))
+
+    def __repr__(self, ident: int = 0, get = getattr) -> str:
         builder = TabbedStringIO(ident)
         builder.write(f"{self.__class__.__name__}(")
 
@@ -310,9 +309,9 @@ class BaseStruct(Parseable):
             for retriever in self._retrievers:
                 if not retriever.supported(self.struct_ver):
                     continue
-                obj = getattr(self, retriever.p_name)
+                obj = get(self, retriever.p_name)
                 if isinstance(obj, BaseStruct):
-                    builder.writeln(f"{retriever.p_name} = {obj.__repr__(builder.ident)},")
+                    builder.writeln(f"{retriever.p_name} = {obj.__repr__(builder.ident, get)},")
                 if isinstance(obj, list):
                     builder.writeln(f"{retriever.p_name} = {_ls_repr(obj, builder.ident)},")
                 else:
@@ -347,16 +346,16 @@ class BaseStruct(Parseable):
     # todo: write hex (decompressed) to file
     # todo: file/header/decompressed in both hex/val <-> data
 
-def _ls_repr(ls: list, ident: int = 0):
+def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
     builder = TabbedStringIO(ident)
     builder.write("[")
 
     with builder.tabbed():
         for item in ls:
             if isinstance(item, BaseStruct):
-                builder.writeln(item.__repr__(builder.ident))
+                builder.writeln(item.__repr__(builder.ident, get))
             if isinstance(item, list):
-                builder.writeln(_ls_repr(item, builder.ident))
+                builder.writeln(_ls_repr(item, builder.ident, get))
             else:
                 builder.writeln(repr(item))
             builder.write(",")
