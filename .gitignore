@@ -1,5 +1,6 @@
 venv/*
 dist/*
+build/*
 src/binary_file_parser.egg-info/*
 docs/*
 mkdocs.yml
@@ -7,3 +8,4 @@ pub.bat
 utils.py
 tests/scxs/*
 *.pyc
+asp_test/*
