@@ -6,10 +6,12 @@ from typing import Type, TYPE_CHECKING
 from alive_progress import alive_it
 
 from binary_file_parser.errors import CompressionError, ParsingError, VersionError
-from binary_file_parser.types.parseable import Parseable
 from binary_file_parser.types.byte_stream import ByteStream
+from binary_file_parser.types.le.array import BaseArray
+from binary_file_parser.types.le.string import StrArray
+from binary_file_parser.types.parseable import Parseable
 from binary_file_parser.types.version import Version
-from binary_file_parser.utils import TabbedStringIO
+from binary_file_parser.utils import BytePrefixStringIO, TabbedStringIO
 
 if TYPE_CHECKING:
     from binary_file_parser.retrievers import Retriever, RetrieverCombiner, RetrieverRef
@@ -312,7 +314,7 @@ class BaseStruct(Parseable):
                 obj = get(self, retriever.p_name)
                 if isinstance(obj, BaseStruct):
                     builder.writeln(f"{retriever.p_name} = {obj.__repr__(builder.ident, get)},")
-                if isinstance(obj, list):
+                elif isinstance(obj, list):
                     builder.writeln(f"{retriever.p_name} = {_ls_repr(obj, builder.ident)},")
                 else:
                     builder.writeln(f"{retriever.p_name} = {obj!r},")
@@ -322,6 +324,34 @@ class BaseStruct(Parseable):
             builder.writeln()
 
         builder.write(")")
+        return builder.getvalue()
+
+    def _dbg_repr_hex(self, ident: int = 0, get = getattr, **kwargs) -> str:
+        # Only the first call should be prefixed, as it's the only one not printed after `<var> =`
+        # Don't show argument in function, not intended for external use (is there a better solution?)
+        prefixed = kwargs.get('prefixed', True)
+
+        builder = BytePrefixStringIO(ident)
+        builder.write(f"{self.__class__.__name__}(", prefixed = prefixed)
+
+        len_gt_zero = False
+        with builder.tabbed():
+            for retriever in self._retrievers:
+                if not retriever.supported(self.struct_ver):
+                    continue
+                obj = get(self, retriever.p_name)
+                if isinstance(obj, BaseStruct):
+                    builder.writeln(f"{retriever.p_name} = {obj._dbg_repr_hex(builder.ident, get, prefixed = False)},")
+                elif isinstance(obj, list):
+                    builder.writeln(f"{retriever.p_name} = {_ls_hex_repr(obj, retriever, builder.ident)},")
+                else:
+                    builder.writeln(f"{retriever.p_name} = {obj!r},", retriever.to_bytes(self))
+                len_gt_zero = True
+
+        if len_gt_zero:
+            builder.writeln()
+
+        builder.writepref(")")
         return builder.getvalue()
 
     def __eq__(self, other: object) -> bool:
@@ -354,7 +384,7 @@ def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
         for item in ls:
             if isinstance(item, BaseStruct):
                 builder.writeln(item.__repr__(builder.ident, get))
-            if isinstance(item, list):
+            elif isinstance(item, list):
                 builder.writeln(_ls_repr(item, builder.ident, get))
             else:
                 builder.writeln(repr(item))
@@ -364,4 +394,38 @@ def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
         builder.writeln()
 
     builder.write("]")
+    return builder.getvalue()
+
+def _ls_hex_repr(ls: list, retriever: Retriever, ident: int = 0, get = getattr) -> str:
+    builder = BytePrefixStringIO(ident)
+    builder.write("[")
+
+    # Get the type used for byte retrieval (per element if it's an array)
+    if isinstance(retriever.dtype, BaseArray):
+        dtype = retriever.dtype.dtype
+    else:
+        dtype = retriever.dtype
+
+    with builder.tabbed():
+        # String Arrays work differently, as they require the entire list when converting "to bytes"
+        # Also hard to display bytes per string as the lengths are shown first
+        if isinstance(retriever.dtype, StrArray):
+            builder.writeln(_ls_repr(ls), dtype._to_bytes(ls))
+            builder.write(",")
+        else:
+            for item in ls:
+                if isinstance(item, BaseStruct):
+                    builder.writeln(item._dbg_repr_hex(builder.ident, get, prefixed = False))
+                    builder.write(",")
+                elif isinstance(item, list):
+                    builder.writeln(_ls_hex_repr(item, retriever, builder.ident, get))
+                    builder.write(",")
+                else:
+                    builder.writeln(repr(item) + ',', dtype._to_bytes(item))
+
+    has_content = len(ls) > 0
+    if has_content:
+        builder.writeln()
+
+    builder.write("]", prefixed = has_content)
     return builder.getvalue()
