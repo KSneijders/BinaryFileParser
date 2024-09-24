@@ -25,7 +25,10 @@ class Manager:
     def __str__(self):
         strings = [f"\n{self.__class__.__name__}:"]
 
-        attributes = [attr for attr in dir(self) if not attr.startswith('_')]
+        attributes = [
+            attr for attr in dir(self)
+            if not attr.startswith('_') and type(getattr(self, attr)).__name__ != 'method'
+        ]
 
         table = {}
         for attr in attributes:
