@@ -43,14 +43,15 @@ class BytePrefixStringIO(TabbedStringIO):
     def writepref(self, string: str):
         return self.write(string, prefixed = True)
 
-    def writeln(self, string: str = "", byte_prefix: bytes = b"") -> int:
+    def writeln(self, string: str = "", hex_prefix: bytes = b"", force_single_line: bool = False) -> int:
         if string == "":
             return super().writeln(string)
 
-        hex_lines = self._to_hex_lines(byte_prefix)
+        hex_lines = self._to_hex_lines(hex_prefix)
         string_lines = string.splitlines()
 
-        if len(hex_lines) <= 1 and len(string_lines) <= 1 or byte_prefix == b"":
+        is_single_line = len(hex_lines) <= 1 and len(string_lines) <= 1 or hex_prefix == b""
+        if is_single_line or force_single_line:
             return self.writepref("\n" + hex_lines[0] + self._tab() + string)
 
         max_len = max(len(hex_lines), len(string_lines))

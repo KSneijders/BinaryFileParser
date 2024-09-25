@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from contextlib import suppress
 from typing import Type, TYPE_CHECKING
 
@@ -311,7 +312,8 @@ class BaseStruct(Parseable):
         for retriever in self._retrievers:
             diff = (getattr(self, retriever.p_name, None), getattr(other, retriever.p_name, None))
             match diff:
-                case None, None: pass
+                case None, None:
+                    pass
                 case _, None:
                     diff_retrievers[retriever.p_name] = ("...", None)
                 case None, _:
@@ -371,7 +373,9 @@ class BaseStruct(Parseable):
                 if isinstance(obj, BaseStruct):
                     builder.writeln(f"{retriever.p_name} = {obj._dbg_repr_hex(builder.ident, get, prefixed = False)},")
                 elif isinstance(obj, list):
-                    builder.writeln(f"{retriever.p_name} = {_ls_hex_repr(obj, retriever, builder.ident)},")
+                    string, hex_prefix = _ls_hex_repr_bytes(obj, retriever, builder.ident)
+
+                    builder.writeln(string, hex_prefix, force_single_line = True)
                 else:
                     builder.writeln(f"{retriever.p_name} = {obj!r},", retriever.to_bytes(self))
                 len_gt_zero = True
@@ -404,6 +408,7 @@ class BaseStruct(Parseable):
     # todo: write hex (decompressed) to file
     # todo: file/header/decompressed in both hex/val <-> data
 
+
 def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
     builder = TabbedStringIO(ident)
     builder.write("[")
@@ -424,8 +429,23 @@ def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
     builder.write("]")
     return builder.getvalue()
 
+
+def _ls_hex_repr_bytes(ls: list, retriever: Retriever, ident: int = 0) -> tuple[str, bytes]:
+    ls_size_hex = b""
+    if isinstance(retriever.dtype, BaseArray):
+        length = retriever.dtype.length if retriever.dtype.length != -1 else 0
+        ls_size_hex = struct.pack(retriever.dtype.struct_symbol, length)
+
+    return f"{retriever.p_name} = {_ls_hex_repr(ls, retriever, ident)},", ls_size_hex
+
+
 def _ls_hex_repr(ls: list, retriever: Retriever, ident: int = 0, get = getattr) -> str:
     builder = BytePrefixStringIO(ident)
+
+    if len(ls) == 0:
+        builder.write("[]")
+        return builder.getvalue()
+
     builder.write("[")
 
     # Get the type used for byte retrieval (per element if it's an array)
@@ -438,22 +458,21 @@ def _ls_hex_repr(ls: list, retriever: Retriever, ident: int = 0, get = getattr) 
         # String Arrays work differently, as they require the entire list when converting "to bytes"
         # Also hard to display bytes per string as the lengths are shown first
         if isinstance(retriever.dtype, StrArray):
-            builder.writeln(_ls_repr(ls), dtype._to_bytes(ls))
-            builder.write(",")
+            builder.writeln(_ls_repr(ls) + ',', dtype._to_bytes(ls))
         else:
             for item in ls:
                 if isinstance(item, BaseStruct):
                     builder.writeln(item._dbg_repr_hex(builder.ident, get, prefixed = False))
                     builder.write(",")
                 elif isinstance(item, list):
-                    builder.writeln(_ls_hex_repr(item, retriever, builder.ident, get))
+                    string, hex_prefix = _ls_hex_repr_bytes(item, retriever, builder.ident)
+
+                    builder.writeln(string, hex_prefix, force_single_line = True)
                     builder.write(",")
                 else:
                     builder.writeln(repr(item) + ',', dtype._to_bytes(item))
 
-    has_content = len(ls) > 0
-    if has_content:
-        builder.writeln()
+    builder.writeln()
+    builder.writepref("]")
 
-    builder.write("]", prefixed = has_content)
     return builder.getvalue()
