@@ -2,6 +2,9 @@ import contextlib
 from io import StringIO
 
 
+complete_hex_string = b""
+
+
 class TabbedStringIO(StringIO):
     def __init__(self, ident: int = 0):
         super().__init__()
@@ -43,15 +46,15 @@ class BytePrefixStringIO(TabbedStringIO):
     def writepref(self, string: str):
         return self.write(string, prefixed = True)
 
-    def writeln(self, string: str = "", hex_prefix: bytes = b"", force_single_line: bool = False) -> int:
+    def writeln(self, string: str = "", hex_prefix: bytes = b"") -> int:
         if string == "":
             return super().writeln(string)
 
         hex_lines = self._to_hex_lines(hex_prefix)
         string_lines = string.splitlines()
 
-        is_single_line = len(hex_lines) <= 1 and len(string_lines) <= 1 or hex_prefix == b""
-        if is_single_line or force_single_line:
+        # If HEX is a single line, assume the given string is not meant to be spread over HEX
+        if len(hex_lines) <= 1:
             return self.writepref("\n" + hex_lines[0] + self._tab() + string)
 
         max_len = max(len(hex_lines), len(string_lines))

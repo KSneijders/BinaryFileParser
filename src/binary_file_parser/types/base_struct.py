@@ -6,9 +6,10 @@ from typing import Type, TYPE_CHECKING
 
 from alive_progress import alive_it
 
+import binary_file_parser.utils
 from binary_file_parser.errors import CompressionError, ParsingError, VersionError
 from binary_file_parser.types.byte_stream import ByteStream
-from binary_file_parser.types.le.array import BaseArray
+from binary_file_parser.types.le.array import Array, BaseArray
 from binary_file_parser.types.le.string import StrArray
 from binary_file_parser.types.parseable import Parseable
 from binary_file_parser.types.version import Version
@@ -261,8 +262,8 @@ class BaseStruct(Parseable):
         for i, retriever in enumerate(retriever_ls):
             if show_progress:
                 retriever_ls.text = f"            <- {retriever.p_name.title().replace('_', ' ')}"
-            if retriever.remaining_compressed:
-                compress_idx = i
+            # if retriever.remaining_compressed:
+            #     compress_idx = i
             bytes_[i] = retriever.to_bytes(self)
 
         compressed = b""
@@ -364,16 +365,19 @@ class BaseStruct(Parseable):
         len_gt_zero = False
         with builder.tabbed():
             for retriever in self._retrievers:
+                print(retriever.p_name)
                 if not retriever.supported(self.struct_ver):
                     continue
                 obj = get(self, retriever.p_name)
                 if isinstance(obj, BaseStruct):
                     builder.writeln(f"{retriever.p_name} = {obj._dbg_repr_hex(builder.ident, get, prefixed = False)},")
                 elif isinstance(obj, list):
-                    string, hex_prefix = _ls_hex_repr_bytes(obj, retriever, builder.ident)
+                    hex_prefix = _ls_length_hex_bytes(retriever.dtype)
 
-                    builder.writeln(string, hex_prefix, force_single_line = True)
+                    binary_file_parser.utils.complete_hex_string += hex_prefix
+                    builder.writeln(f"{retriever.p_name} = {_ls_hex_repr(obj, retriever.dtype, builder.ident)},", hex_prefix)
                 else:
+                    binary_file_parser.utils.complete_hex_string += retriever.to_bytes(self)
                     builder.writeln(f"{retriever.p_name} = {obj!r},", retriever.to_bytes(self))
                 len_gt_zero = True
 
@@ -427,47 +431,52 @@ def _ls_repr(ls: list, ident: int = 0, get = getattr) -> str:
     return builder.getvalue()
 
 
-def _ls_hex_repr_bytes(ls: list, retriever: Retriever, ident: int = 0) -> tuple[str, bytes]:
+def _ls_length_hex_bytes(parseable: Parseable) -> bytes:
     ls_size_hex = b""
-    if isinstance(retriever.dtype, BaseArray):
-        length = retriever.dtype.length if retriever.dtype.length != -1 else 0
-        ls_size_hex = struct.pack(retriever.dtype.struct_symbol, length)
+    if isinstance(parseable, Array) and parseable.length != -1:
+        ls_size_hex = struct.pack(parseable.struct_symbol, parseable.length)
 
-    return f"{retriever.p_name} = {_ls_hex_repr(ls, retriever, ident)},", ls_size_hex
+    return ls_size_hex
 
 
-def _ls_hex_repr(ls: list, retriever: Retriever, ident: int = 0, get = getattr) -> str:
+def _ls_hex_repr(ls: list, parseable: Parseable, ident: int = 0, get = getattr) -> str:
     builder = BytePrefixStringIO(ident)
 
     if len(ls) == 0:
         builder.write("[]")
         return builder.getvalue()
 
-    builder.write("[")
-
-    # Get the type used for byte retrieval (per element if it's an array)
-    if isinstance(retriever.dtype, BaseArray):
-        dtype = retriever.dtype.dtype
+    # Get the type used for byte retrieval (internal dtype for arrays)
+    if isinstance(parseable, BaseArray):
+        dtype = parseable.dtype
     else:
-        dtype = retriever.dtype
+        dtype = parseable
+
+    builder.write("[")
+    builder.write(str(dtype))
 
     with builder.tabbed():
-        # String Arrays work differently, as they require the entire list when converting "to bytes"
-        # Also hard to display bytes per string as the lengths are shown first
-        if isinstance(retriever.dtype, StrArray):
-            builder.writeln(_ls_repr(ls) + ',', dtype._to_bytes(ls))
-        else:
-            for item in ls:
-                if isinstance(item, BaseStruct):
-                    builder.writeln(item._dbg_repr_hex(builder.ident, get, prefixed = False))
-                    builder.write(",")
-                elif isinstance(item, list):
-                    string, hex_prefix = _ls_hex_repr_bytes(item, retriever, builder.ident)
+        for item in ls:
+            if isinstance(item, BaseStruct):
+                builder.writeln(item._dbg_repr_hex(builder.ident, get, prefixed = False))
+                builder.write(",")
+            elif isinstance(item, list):
+                hex_prefix = _ls_length_hex_bytes(parseable)
 
-                    builder.writeln(string, hex_prefix, force_single_line = True)
-                    builder.write(",")
-                else:
-                    builder.writeln(repr(item) + ',', dtype._to_bytes(item))
+                binary_file_parser.utils.complete_hex_string += hex_prefix
+                builder.writeln(_ls_hex_repr(item, parseable, ident), hex_prefix)
+                builder.write(",")
+            else:
+                byte_extractor = dtype
+                hex_prefix = b""
+
+                # Retrieve bytes from a single StrArray entry; Which cannot be called on the StrArray itself
+                if isinstance(dtype, StrArray):
+                    hex_prefix = struct.pack(dtype.struct_symbol, len(item))
+                    byte_extractor = super(type(parseable), parseable)
+
+                binary_file_parser.utils.complete_hex_string += hex_prefix + byte_extractor._to_bytes(item)
+                builder.writeln(repr(item) + ',', hex_prefix + byte_extractor._to_bytes(item))
 
     builder.writeln()
     builder.writepref("]")
